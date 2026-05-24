@@ -1,0 +1,47 @@
+# Build artifacts
+Mllama.app/
+LlamaChat.app/
+*.dmg
+dist/
+dmg/
+
+# Compiled binaries / dylibs that live in app bundles or get downloaded
+*.o
+*.swiftmodule
+*.swiftdoc
+*.swiftsourceinfo
+*.dylib
+*.so
+
+# Bundled upstream binaries (built separately, not part of this repo)
+bin/
+whisper/
+whisper-build/
+
+# macOS metadata
+.DS_Store
+._*
+*.icloud
+
+# Xcode / SwiftPM
+.build/
+.swiftpm/
+*.xcodeproj/
+*.xcworkspace/
+DerivedData/
+
+# Logs
+*.log
+
+# Runtime state created by the app (not source)
+mllama-data/
+
+# Generated icons (we ship icon-1024.png + icongen.swift; the .icns gets built)
+*.icns
+
+# Temp
+/tmp/
+*.tmp
+
+# Built artifact of src/icongen.swift; rebuilt from source if needed
+src/icongen
