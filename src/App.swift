@@ -446,7 +446,7 @@ struct RootView: View {
                     .foregroundStyle(Theme.text)
                     .lineLimit(1)
                     .truncationMode(.middle)
-                    .frame(maxWidth: 200)
+                    .frame(maxWidth: 160)
             }
             .padding(.horizontal, 10).padding(.vertical, 5)
             .glass(cornerRadius: 999)
@@ -498,7 +498,7 @@ struct RootView: View {
                     .foregroundStyle(Theme.text)
                     .lineLimit(1)
                     .truncationMode(.middle)
-                    .frame(maxWidth: 200)
+                    .frame(maxWidth: 160)
             }
             .padding(.horizontal, 10).padding(.vertical, 5)
             .glass(cornerRadius: 999)
@@ -542,19 +542,40 @@ struct RootView: View {
     }
 
     private var currentLLMLabel: String {
-        if !server.modelName.isEmpty { return server.modelName }
-        if let path = server.modelPath { return (path as NSString).lastPathComponent }
-        return "Pick LLM"
+        if !server.modelName.isEmpty { return Self.prettifyModelName(server.modelName) }
+        if let path = server.modelPath {
+            return Self.prettifyModelName((path as NSString).lastPathComponent)
+        }
+        return "Pick"
     }
     private var currentImageLabel: String {
-        if let path = sdServer.modelPath { return (path as NSString).lastPathComponent }
-        return "Pick image model"
+        if let path = sdServer.modelPath {
+            return Self.prettifyModelName((path as NSString).lastPathComponent)
+        }
+        return "Pick"
     }
     private var currentVideoLabel: String {
         if !videoModelPathStored.isEmpty {
-            return (videoModelPathStored as NSString).lastPathComponent
+            return Self.prettifyModelName((videoModelPathStored as NSString).lastPathComponent)
         }
-        return "Pick video model"
+        return "Pick"
+    }
+
+    /// Strip extension + common quant suffix so the pill label reads
+    /// "FLUX.1 schnell" instead of "flux1-schnell-Q4_K_S.gguf". The actual
+    /// path is still shown verbatim in the .help() tooltip.
+    private static func prettifyModelName(_ raw: String) -> String {
+        var s = raw
+        for ext in [".gguf", ".safetensors", ".bin"] {
+            if s.lowercased().hasSuffix(ext) { s = String(s.dropLast(ext.count)) }
+        }
+        if let r = s.range(of: #"(?i)[-_](q\d+(_[A-Za-z0-9]+)*|f16|bf16|f32|fp16|fp32|iq\d[A-Za-z_]*)$"#,
+                            options: .regularExpression) {
+            s = String(s[..<r.lowerBound])
+        }
+        s = s.replacingOccurrences(of: "-Instruct", with: "")
+        s = s.replacingOccurrences(of: "-chat",     with: "")
+        return s
     }
 
     /// Video pill — no live server status (sd-cli is one-shot), but shows
@@ -569,7 +590,7 @@ struct RootView: View {
                     .foregroundStyle(Theme.text)
                     .lineLimit(1)
                     .truncationMode(.middle)
-                    .frame(maxWidth: 200)
+                    .frame(maxWidth: 160)
             }
             .padding(.horizontal, 10).padding(.vertical, 5)
             .glass(cornerRadius: 999)

@@ -43,6 +43,11 @@ struct ImageStudio: View {
 
             // Right: preview + results
             VStack(spacing: 0) {
+                CapabilitiesBanner(
+                    need: [.sdServer],
+                    onOpenQuickSetup: { OnboardingState.shared.show() },
+                    onOpenSettings:   { openSettingsFallback() }
+                )
                 serverBanner
                 companionBanner
                 if showEditor, let url = editingURL {

@@ -37,7 +37,21 @@ struct VideoStudio: View {
         VStack(spacing: 0) {
             modeBar
             if mode == .generate {
+                // Binary-level capabilities: sd-cli is required for video
+                // generation, ffmpeg for the webp→mp4 transcode + clip editor.
+                CapabilitiesBanner(
+                    need: [.sdCli, .ffmpeg],
+                    onOpenQuickSetup: { OnboardingState.shared.show() },
+                    onOpenSettings:   { openSettingsFallback() }
+                )
                 videoCompanionBanner
+            }
+            if mode == .edit {
+                CapabilitiesBanner(
+                    need: [.ffmpeg],
+                    onOpenQuickSetup: { OnboardingState.shared.show() },
+                    onOpenSettings:   { openSettingsFallback() }
+                )
             }
             switch mode {
             case .generate, .edit:
