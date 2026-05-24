@@ -69,8 +69,25 @@ that to other AI agents over the Model Context Protocol.
 INSTALL
   Drag Mllama.app into the Applications folder shortcut.
 
-FIRST RUN
-  1. Open Mllama from Applications.
+FIRST RUN — IMPORTANT
+  The app is ad-hoc signed (not notarized through Apple's paid Developer
+  Program), so macOS Gatekeeper will block the first launch with:
+      "Apple could not verify Mllama is free of malware..."
+
+  Pick ONE of the following to bypass:
+
+    A. Right-click Mllama.app in /Applications → Open → click Open in the
+       warning dialog. macOS remembers this choice; subsequent launches
+       just work.
+
+    B. Run this in Terminal to strip the quarantine flag permanently:
+          xattr -dr com.apple.quarantine /Applications/Mllama.app
+
+  This is normal for any open-source macOS app without a $99/yr Apple
+  Developer ID. The app's source is at https://github.com/Mirxa27/mllama
+  if you want to verify the build yourself.
+
+  1. Open Mllama from Applications (using option A or B above).
   2. Follow the welcome wizard.
   3. (Optional) Install ffmpeg via Homebrew when prompted.
   4. (Optional) Build stable-diffusion.cpp when prompted — binaries land in
