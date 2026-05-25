@@ -1,0 +1,91 @@
+name: Release
+
+# Trigger by pushing a tag like `v3.0.3`.
+# Requires repository secrets:
+#   DEVID_P12 — base64 of Developer ID Application .p12 cert
+#   DEVID_P12_PASSWORD — password for the .p12
+#   NOTARY_APPLE_ID — Apple ID for notarization
+#   NOTARY_TEAM_ID — Developer team ID (e.g. 48P296BWWP)
+#   NOTARY_PASSWORD — app-specific password
+
+on:
+  push:
+    tags:
+      - "v[0-9]+.[0-9]+.[0-9]+"
+
+permissions:
+  contents: write   # Needed to create the GitHub release
+
+jobs:
+  release:
+    name: Sign + notarize + publish
+    runs-on: macos-15
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Tag → version
+        id: tag
+        run: |
+          TAG="${GITHUB_REF#refs/tags/}"
+          VERSION="${TAG#v}"
+          echo "tag=$TAG"          >> "$GITHUB_OUTPUT"
+          echo "version=$VERSION"  >> "$GITHUB_OUTPUT"
+
+      - name: Import Developer ID certificate
+        uses: apple-actions/import-codesign-certs@v3
+        with:
+          p12-file-base64: ${{ secrets.DEVID_P12 }}
+          p12-password:    ${{ secrets.DEVID_P12_PASSWORD }}
+
+      - name: Run test suite
+        run: swift Tests/verify.swift
+
+      - name: Release build
+        run: ./build.sh release
+
+      - name: Stamp version into Info.plist
+        env:
+          VERSION: ${{ steps.tag.outputs.version }}
+        run: |
+          PLIST=Mllama.app/Contents/Info.plist
+          /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString $VERSION" "$PLIST"
+          BUILD_NUM=$(echo "$VERSION" | awk -F. '{ printf "%d%03d%03d", $1, $2, $3 }')
+          /usr/libexec/PlistBuddy -c "Set :CFBundleVersion $BUILD_NUM" "$PLIST"
+
+      - name: Store notary credentials
+        env:
+          APPLE_ID:   ${{ secrets.NOTARY_APPLE_ID }}
+          TEAM_ID:    ${{ secrets.NOTARY_TEAM_ID }}
+          PASSWORD:   ${{ secrets.NOTARY_PASSWORD }}
+        run: |
+          xcrun notarytool store-credentials "mllama-notary" \
+            --apple-id "$APPLE_ID" \
+            --team-id "$TEAM_ID" \
+            --password "$PASSWORD"
+
+      - name: Sign + notarize + staple + DMG round-trip
+        run: ./notarize.sh
+
+      - name: Compute SHA256
+        id: digest
+        run: |
+          DMG="dist/Mllama-${{ steps.tag.outputs.version }}-arm64.dmg"
+          SHA=$(shasum -a 256 "$DMG" | awk '{print $1}')
+          echo "sha256=$SHA"      >> "$GITHUB_OUTPUT"
+          echo "dmg=$DMG"         >> "$GITHUB_OUTPUT"
+
+      - name: Create GitHub release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release create "${{ steps.tag.outputs.tag }}" \
+            --title "Mllama ${{ steps.tag.outputs.version }}" \
+            --notes "Apple-notarized release.
+
+            See [CHANGELOG.md](https://github.com/${{ github.repository }}/blob/main/CHANGELOG.md) for what's new.
+
+            **SHA256:** \`${{ steps.digest.outputs.sha256 }}\`
+
+            Install: download the DMG, drag Mllama.app to Applications, launch. No Gatekeeper warning." \
+            "${{ steps.digest.outputs.dmg }}"

@@ -165,8 +165,9 @@ actor HuggingFaceClient {
     }()
 
     func token() -> String? {
-        let t = UserDefaults.standard.string(forKey: HFKeys.token) ?? ""
-        return t.isEmpty ? nil : t
+        // Migrated from UserDefaults to Keychain in 3.0.3. KeychainStore
+        // does the one-shot legacy migration the first time it's read.
+        KeychainStore.huggingFaceToken()
     }
 
     private func authorize(_ req: inout URLRequest) {

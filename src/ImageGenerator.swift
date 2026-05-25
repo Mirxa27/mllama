@@ -142,6 +142,7 @@ final class ImageGenerator: ObservableObject {
         cancel()
         isGenerating = true
         lastError = nil
+        DockBadge.shared.setImage(1)
         progress = ImageGenProgress(step: 0, totalSteps: params.steps, fraction: 0,
                                     etaSeconds: 0, previewURL: nil, message: "Queued…")
         let task = Task { [weak self] in
@@ -152,7 +153,11 @@ final class ImageGenerator: ObservableObject {
     }
 
     private func runGenerate(_ params: ImageGenParams) async {
-        defer { Task { @MainActor in self.isGenerating = false; self.progress = nil } }
+        defer { Task { @MainActor in
+            self.isGenerating = false
+            self.progress = nil
+            DockBadge.shared.setImage(0)
+        } }
         guard let base = server.serverURL else { return }
 
         let start = Date()
@@ -246,6 +251,18 @@ final class ImageGenerator: ObservableObject {
                     )
                     self.results.insert(r, at: 0)
                     MediaLibrary.shared.record(image: r)
+                }
+            }
+            // Fire a banner if the user backgrounded the app while we worked.
+            if let firstURL = savedURLs.first {
+                let title = "Image ready"
+                let promptPreview = String(params.prompt.prefix(80))
+                let body = "\(modelName) · \(Int(elapsed))s\n\(promptPreview)"
+                await MainActor.run {
+                    NotificationCenterBridge.post(kind: .imageReady,
+                                                   title: title,
+                                                   body: body,
+                                                   filePath: firstURL.path)
                 }
             }
         } catch is CancellationError {

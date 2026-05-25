@@ -62,11 +62,11 @@ final class MCPServerHost: ObservableObject {
 
     func start() {
         stop()
-        NSLog("[MCPServerHost] start() called, port=\(configuredPort)")
+        Log.mcp.info("start() called, port=\(self.configuredPort, privacy: .public)")
         do {
             let port = configuredPort
             guard let nwPort = NWEndpoint.Port(rawValue: port) else {
-                NSLog("[MCPServerHost] invalid port \(port)")
+                Log.mcp.error("invalid port \(port, privacy: .public)")
                 self.status = .failed("Invalid port: \(port)")
                 return
             }
@@ -78,7 +78,7 @@ final class MCPServerHost: ObservableObject {
             params.allowLocalEndpointReuse = true
             let l = try NWListener(using: params, on: nwPort)
             l.stateUpdateHandler = { [weak self] state in
-                NSLog("[MCPServerHost] listener state: \(state)")
+                Log.mcp.info("listener state: \(String(describing: state), privacy: .public)")
                 Task { @MainActor in
                     guard let self else { return }
                     switch state {

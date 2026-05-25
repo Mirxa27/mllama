@@ -125,6 +125,7 @@ final class HFDownloadManager: NSObject, ObservableObject {
 
         let job = HFDownloadJob(repoId: repoId, file: file, destination: dest)
         jobs.append(job)
+        refreshDockBadge()
         Task { await start(job: job) }
         return job
     }
@@ -255,6 +256,11 @@ extension HFDownloadManager: URLSessionDownloadDelegate {
                     }
                     try FileManager.default.moveItem(at: staging, to: job.destination)
                     job.state = .completed(job.destination)
+                    NotificationCenterBridge.post(
+                        kind: .downloadDone,
+                        title: "Download complete",
+                        body: "\(job.displayName)\n\(job.repoId)"
+                    )
                 } catch {
                     try? FileManager.default.removeItem(at: staging)
                     job.state = .failed("Could not save file: \(error.localizedDescription)")
@@ -264,7 +270,19 @@ extension HFDownloadManager: URLSessionDownloadDelegate {
             }
             job.task = nil
             self.tasksToJobs.removeValue(forKey: taskID)
+            self.refreshDockBadge()
         }
+    }
+
+    @MainActor
+    private func refreshDockBadge() {
+        let active = jobs.filter {
+            switch $0.state {
+            case .running, .queued, .paused: return true
+            default: return false
+            }
+        }.count
+        DockBadge.shared.setDownloads(active)
     }
 
     nonisolated func urlSession(_ session: URLSession,

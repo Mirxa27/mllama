@@ -58,8 +58,9 @@ struct SettingsView: View {
     @AppStorage(SDKeys.videoVaePath)    private var vidVaePath: String = ""
     @AppStorage(SDKeys.videoT5Path)     private var vidT5Path: String = ""
 
-    // HF-related defaults
-    @AppStorage(HFKeys.token)          private var hfToken: String = ""
+    // HF token now lives in the Keychain. Hydrated on first appear by
+    // `hfTokenBinding`, which reads through KeychainStore on every set.
+    @State private var hfToken: String = KeychainStore.huggingFaceToken() ?? ""
     @AppStorage(HFKeys.downloadsRoot)  private var hfDownloadsRoot: String = ""
 
     var body: some View {
@@ -71,6 +72,8 @@ struct SettingsView: View {
             serverTab.tabItem { Label("Performance", systemImage: "speedometer") }
             voiceTab.tabItem { Label("Voice", systemImage: "waveform") }
             agentTab.tabItem { Label("Agent", systemImage: "circle.hexagonpath") }
+            PermissionsSettingsView()
+                .tabItem { Label("Permissions", systemImage: "lock.shield") }
             EvolutionSettingsView()
                 .tabItem { Label("Evolution", systemImage: "wand.and.stars") }
             mcpTab.tabItem { Label("MCP", systemImage: "bolt.horizontal") }
@@ -224,6 +227,20 @@ struct SettingsView: View {
         return s
     }
 
+    /// Binding for the HF token SecureField. Reads/writes the Keychain
+    /// directly so the secret never lives in UserDefaults.
+    private var hfTokenBinding: Binding<String> {
+        Binding(
+            get: { hfToken },
+            set: { newValue in
+                hfToken = newValue
+                try? KeychainStore.setHuggingFaceToken(
+                    newValue.isEmpty ? nil : newValue
+                )
+            }
+        )
+    }
+
     private func runImageSmokeTest() {
         smokeTestRunning = true
         smokeTestStatus = "Submitting request to sd-server…"
@@ -350,11 +367,15 @@ struct SettingsView: View {
     private var huggingFaceTab: some View {
         Form {
             Section("Access token") {
-                SecureField("hf_xxxxxxxx", text: $hfToken)
+                // Custom binding writes through to the Keychain — the
+                // SecureField content itself doesn't survive across launches
+                // unless we hydrate from the Keychain on appear.
+                SecureField("hf_xxxxxxxx", text: hfTokenBinding)
                 Text("Optional. Higher rate limits (5K vs 3K resolver calls per 5min) and access to gated models. Get one at huggingface.co/settings/tokens.")
                     .font(.caption2).foregroundStyle(Theme.textFaint)
                 if !hfToken.isEmpty {
-                    Label("Token set (used for all HF requests).", systemImage: "checkmark.seal.fill")
+                    Label("Token set — stored in the system Keychain.",
+                          systemImage: "lock.shield.fill")
                         .foregroundStyle(Theme.mint).font(.caption)
                 }
             }

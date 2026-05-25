@@ -98,6 +98,35 @@ mv "${TMP_OUT}" "${APP_BIN}"
 chmod +x "${APP_BIN}"
 trap - EXIT
 
+# Patch Info.plist with the runtime-required keys.  Idempotent — adds the
+# entry if missing, replaces if already present.  Without these, macOS
+# silently denies microphone / Apple Events at runtime and the mllama://
+# URL scheme is never registered with Launch Services.
+PLIST="${APP_BUNDLE}/Contents/Info.plist"
+patch_plist_string() {
+  local key="$1"; local value="$2"
+  /usr/libexec/PlistBuddy -c "Set :${key} \"${value}\"" "${PLIST}" 2>/dev/null \
+    || /usr/libexec/PlistBuddy -c "Add :${key} string \"${value}\"" "${PLIST}"
+}
+patch_plist_string "NSMicrophoneUsageDescription" "Mllama uses the microphone to transcribe your voice input into chat messages, processed locally on this Mac."
+patch_plist_string "NSSpeechRecognitionUsageDescription" "Mllama uses speech recognition to turn your spoken words into text for the chat. Recognition runs on-device when supported."
+patch_plist_string "NSAppleEventsUsageDescription" "Mllama uses Apple Events to open Terminal during Quick Setup, so it can run cmake or brew install ffmpeg without you having to copy-paste commands."
+# URL scheme — only add if not present.
+if ! /usr/libexec/PlistBuddy -c "Print :CFBundleURLTypes" "${PLIST}" >/dev/null 2>&1; then
+  /usr/libexec/PlistBuddy -c "Add :CFBundleURLTypes array" "${PLIST}"
+  /usr/libexec/PlistBuddy -c "Add :CFBundleURLTypes:0 dict" "${PLIST}"
+  /usr/libexec/PlistBuddy -c "Add :CFBundleURLTypes:0:CFBundleURLName string org.mllama.app" "${PLIST}"
+  /usr/libexec/PlistBuddy -c "Add :CFBundleURLTypes:0:CFBundleURLSchemes array" "${PLIST}"
+  /usr/libexec/PlistBuddy -c "Add :CFBundleURLTypes:0:CFBundleURLSchemes:0 string mllama" "${PLIST}"
+fi
+
+# Privacy manifest — Apple-required API-usage declarations + tracking=false.
+# Lives at Contents/Resources/PrivacyInfo.xcprivacy.
+if [ -f "Resources/PrivacyInfo.xcprivacy" ]; then
+  mkdir -p "${APP_BUNDLE}/Contents/Resources"
+  cp "Resources/PrivacyInfo.xcprivacy" "${APP_BUNDLE}/Contents/Resources/PrivacyInfo.xcprivacy"
+fi
+
 # Print resulting binary size.
 SIZE=$(stat -f%z "${APP_BIN}" 2>/dev/null || stat -c%s "${APP_BIN}" 2>/dev/null || echo "?")
 echo "✓ Built ${APP_BIN} (${SIZE} bytes, mode=${MODE})"

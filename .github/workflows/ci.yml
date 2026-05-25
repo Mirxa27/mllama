@@ -1,0 +1,59 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  build-and-test:
+    name: Build + test (macOS, arm64)
+    runs-on: macos-15
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Show toolchain
+        run: |
+          sw_vers
+          xcodebuild -version
+          swift --version
+
+      - name: Run pure-function test suite
+        run: swift Tests/verify.swift
+
+      - name: Debug build
+        run: ./build.sh debug
+
+      - name: Validate Info.plist
+        run: |
+          PLIST="Mllama.app/Contents/Info.plist"
+          plutil -lint "$PLIST"
+          # Required keys must be present.
+          for key in \
+            CFBundleIdentifier CFBundleExecutable CFBundleShortVersionString \
+            LSMinimumSystemVersion \
+            NSMicrophoneUsageDescription \
+            NSSpeechRecognitionUsageDescription \
+            NSAppleEventsUsageDescription \
+            CFBundleURLTypes; do
+            if ! /usr/libexec/PlistBuddy -c "Print :$key" "$PLIST" >/dev/null 2>&1; then
+              echo "::error::missing Info.plist key: $key"
+              exit 1
+            fi
+          done
+          echo "✓ all required Info.plist keys present"
+
+      - name: Validate Privacy manifest
+        run: |
+          MANIFEST="Mllama.app/Contents/Resources/PrivacyInfo.xcprivacy"
+          if [ ! -f "$MANIFEST" ]; then
+            echo "::error::missing PrivacyInfo.xcprivacy"
+            exit 1
+          fi
+          plutil -lint "$MANIFEST"
+          echo "✓ privacy manifest valid"
+
+      - name: Verify Mach-O is arm64
+        run: file Mllama.app/Contents/MacOS/Mllama

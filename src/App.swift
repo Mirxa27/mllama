@@ -26,6 +26,7 @@ struct MllamaApp: App {
     @StateObject private var mcpHostRegistry: MCPHostToolRegistry
     @StateObject private var mcpHost: MCPServerHost
     @StateObject private var evolution: SelfImprovementCoordinator
+    @StateObject private var updateChecker = UpdateChecker()
 
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
 
@@ -115,12 +116,16 @@ struct MllamaApp: App {
                 .environmentObject(mcpHost)
                 .environmentObject(mcpHostRegistry)
                 .environmentObject(evolution)
+                .environmentObject(updateChecker)
                 .preferredColorScheme(.dark)
                 .onAppear {
                     appDelegate.server = server
                     appDelegate.sdServer = sdServer
                     appDelegate.mcpHost = mcpHost
+                    appDelegate.workspace = workspace
+                    appDelegate.pickerState = pickerState
                     bootstrap()
+                    updateChecker.start()
                 }
         }
         .windowResizability(.contentMinSize)
@@ -196,7 +201,7 @@ struct MllamaApp: App {
                 try? data.write(to: url)
             }
         }
-        NSLog("[Mllama] \(msg)")
+        Log.app.info("\(msg, privacy: .public)")
     }
 
     private func bootstrap() {
@@ -312,6 +317,7 @@ struct RootView: View {
     @EnvironmentObject var catalog: UnifiedModelCatalog
     @EnvironmentObject var library: ModelLibrary
     @EnvironmentObject var downloads: HFDownloadManager
+    @EnvironmentObject var updateChecker: UpdateChecker
     /// Drives the video pill label — SwiftUI re-renders when the underlying
     /// UserDefaults key changes via `@AppStorage`.
     @AppStorage(SDKeys.videoModelPath) private var videoModelPathStored: String = ""
@@ -331,6 +337,7 @@ struct RootView: View {
                         .background(VisualEffectBackground(material: .sidebar).ignoresSafeArea())
                 } detail: {
                     VStack(spacing: 0) {
+                        updateBanner
                         topBar
                         WorkspaceDetail()
                         if showLog {
@@ -378,6 +385,46 @@ struct RootView: View {
             case .completed, .failed, .cancelled: return acc + 1
             default: return acc
             }
+        }
+    }
+
+    /// Auto-update banner — visible only when UpdateChecker has surfaced a
+    /// newer version. One row: version, "What's new" → release notes,
+    /// "Download" → GitHub release page. Dismiss → marks the version seen
+    /// so we don't keep nagging.
+    @ViewBuilder
+    private var updateBanner: some View {
+        if let upd = updateChecker.availableUpdate {
+            HStack(spacing: 10) {
+                Image(systemName: "arrow.up.circle.fill")
+                    .foregroundStyle(Theme.cyan)
+                    .accessibilityHidden(true)
+                VStack(alignment: .leading, spacing: 1) {
+                    Text("Mllama \(upd.version) is available")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(Theme.text)
+                    Text("You're on \(UpdateChecker.bundleVersion()).")
+                        .font(.caption2)
+                        .foregroundStyle(Theme.textMuted)
+                }
+                Spacer()
+                Link(destination: upd.releaseURL) {
+                    Label("Download", systemImage: "arrow.down.circle")
+                        .font(.caption.weight(.medium))
+                }
+                .buttonStyle(.bordered)
+                DismissButton(tint: Theme.cyan) {
+                    withAnimation(.easeInOut(duration: 0.22)) {
+                        updateChecker.dismissCurrent()
+                    }
+                }
+            }
+            .padding(.horizontal, Theme.Space.md)
+            .padding(.vertical, 8)
+            .background(Theme.cyan.opacity(0.10))
+            .overlay(Rectangle().fill(Theme.cyan.opacity(0.4)).frame(height: 0.5),
+                     alignment: .bottom)
+            .transition(.move(edge: .top).combined(with: .opacity))
         }
     }
 
@@ -651,10 +698,47 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     weak var server: ServerController?
     weak var sdServer: SDServerController?
     weak var mcpHost: MCPServerHost?
+    weak var workspace: WorkspaceState?
+    weak var pickerState: ModelPickerState?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.appearance = NSAppearance(named: .darkAqua)
         DispatchQueue.main.async { self.styleWindows() }
+
+        // Register the AppKit Apple Event handler for mllama:// deep links.
+        // The scheme is declared in Info.plist via CFBundleURLTypes.
+        NSAppleEventManager.shared().setEventHandler(
+            self,
+            andSelector: #selector(handleURLEvent(_:withReplyEvent:)),
+            forEventClass: AEEventClass(kInternetEventClass),
+            andEventID: AEEventID(kAEGetURL)
+        )
+
+        // First-run permission prompt: request notifications so we can
+        // surface "image ready" / "download done" while the user is in
+        // another app. This fires the standard macOS prompt once; users
+        // can revoke later via System Settings.
+        Task { @MainActor in
+            // Wait a tick so the window has presented before the modal
+            // permission alert appears — feels less abrupt that way.
+            try? await Task.sleep(nanoseconds: 1_500_000_000)
+            let perm = PermissionManager.shared
+            if perm.status[.notifications] == .notDetermined {
+                _ = await perm.request(.notifications)
+            }
+        }
+    }
+
+    /// Called by NSAppleEventManager when a mllama:// URL is opened from
+    /// Finder, Safari, another app, or the Spotlight/Launch Services route.
+    @objc func handleURLEvent(_ event: NSAppleEventDescriptor,
+                              withReplyEvent reply: NSAppleEventDescriptor) {
+        guard let urlString = event.paramDescriptor(forKeyword: keyDirectObject)?.stringValue,
+              let url = URL(string: urlString) else { return }
+        Task { @MainActor in
+            guard let workspace = self.workspace, let picker = self.pickerState else { return }
+            URLSchemeRouter.handle(url, workspace: workspace, pickerState: picker)
+        }
     }
 
     func applicationDidBecomeActive(_ notification: Notification) {

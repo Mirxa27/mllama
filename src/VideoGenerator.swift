@@ -85,6 +85,7 @@ final class VideoGenerator: ObservableObject {
         cancel()
         isGenerating = true
         lastError = nil
+        DockBadge.shared.setVideo(1)
         progress = VideoGenProgress(step: 0, totalSteps: params.steps, fraction: 0, message: "Starting…")
 
         let outRoot = server.outputRoot
@@ -190,6 +191,16 @@ final class VideoGenerator: ObservableObject {
                 self.results.insert(result, at: 0)
                 MediaLibrary.shared.record(video: result)
                 self.progress = nil
+                DockBadge.shared.setVideo(0)
+                let title = "Video ready"
+                let promptPreview = String(params.prompt.prefix(80))
+                let body = "\((model as NSString).lastPathComponent) · \(Int(elapsed))s\n\(promptPreview)"
+                NotificationCenterBridge.post(
+                    kind: .videoReady,
+                    title: title,
+                    body: body,
+                    filePath: result.thumbnailURL?.path ?? finalURL.path
+                )
             }
         }
 
