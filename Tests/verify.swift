@@ -171,6 +171,26 @@ suite("UpdateChecker.isNewer (SemVer)") {
     test("3.0.1", "3.0",   true,  "remote longer wins on extra non-zero")
 }
 
+// MARK: - Agent.isContextOverflowError (copy of detector logic)
+
+func isContextOverflowError(_ message: String) -> Bool {
+    let lower = message.lowercased()
+    return lower.contains("exceed_context_size_error")
+        || lower.contains("exceeds the available context size")
+        || lower.contains("context size")
+}
+
+suite("Agent context-overflow detection") {
+    expect(isContextOverflowError(#"{"error":{"code":400,"message":"request (29568 tokens) exceeds the available context size (8192 tokens), try increasing it","type":"exceed_context_size_error","n_prompt_tokens":29568,"n_ctx":8192}}"#),
+           "canonical 400 from user report")
+    expect(isContextOverflowError("HTTP 400: exceed_context_size_error"),
+           "short error_type form")
+    expect(!isContextOverflowError("Server: HTTP 503 — service unavailable"),
+           "rejects unrelated server errors")
+    expect(!isContextOverflowError("connection refused"),
+           "rejects network errors")
+}
+
 // MARK: - Result
 
 print("\n────────────────────────────────────────")

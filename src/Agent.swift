@@ -88,6 +88,11 @@ final class Agent: ObservableObject {
         if let url = server.serverURL { await chatClient.updateBase(url) }
 
         var iter = 0
+        // Tracks whether we've already auto-compacted this run after hitting
+        // an `exceed_context_size_error`. Without this guard, a hostile
+        // sequence of tool results that immediately re-fills the context
+        // would put us into an infinite compact/retry loop.
+        var didEmergencyCompact = false
         while iter < maxIterations {
             iter += 1
             if Task.isCancelled { return }
@@ -99,6 +104,7 @@ final class Agent: ObservableObject {
                 var pendingNames: [Int: String] = [:]
                 var pendingIds: [Int: String] = [:]
                 var finishReason: String?
+                var streamErrorMessage: String?
 
                 for try await event in stream {
                     if Task.isCancelled { return }
@@ -113,8 +119,26 @@ final class Agent: ObservableObject {
                     case .finish(let reason):
                         finishReason = reason
                     case .error(let msg):
-                        lastError = msg
+                        streamErrorMessage = msg
                     }
+                }
+
+                // Detect the llama-server context-overflow error and
+                // auto-recover by compacting the conversation once.
+                if let err = streamErrorMessage,
+                   Self.isContextOverflowError(err),
+                   !didEmergencyCompact {
+                    Log.agent.notice("Context overflow — auto-compacting and retrying.")
+                    // Drop the in-flight (empty) assistant message we just appended.
+                    if messages.indices.contains(assistantIndex) {
+                        messages.remove(at: assistantIndex)
+                    }
+                    await compactNow()
+                    didEmergencyCompact = true
+                    continue
+                }
+                if let err = streamErrorMessage {
+                    lastError = err
                 }
 
                 messages[assistantIndex].streaming = false
@@ -150,11 +174,33 @@ final class Agent: ObservableObject {
                     ))
                 }
             } catch {
-                lastError = error.localizedDescription
+                let msg = error.localizedDescription
+                // Same recovery on a thrown error path — some llama-server
+                // builds surface context overflow via HTTP 400 body rather
+                // than a stream `error` event.
+                if Self.isContextOverflowError(msg), !didEmergencyCompact {
+                    Log.agent.notice("Context overflow (thrown) — auto-compacting and retrying.")
+                    await compactNow()
+                    didEmergencyCompact = true
+                    continue
+                }
+                lastError = msg
                 return
             }
         }
         lastError = "Reached max agent iterations (\(maxIterations))."
+    }
+
+    /// Detect llama-server's context-overflow response so we can compact +
+    /// retry instead of dumping a wall of JSON onto the user. Matches the
+    /// canonical `exceed_context_size_error` plus the more permissive
+    /// "exceeds the available context size" substring that older builds
+    /// produce.
+    static func isContextOverflowError(_ message: String) -> Bool {
+        let lower = message.lowercased()
+        return lower.contains("exceed_context_size_error")
+            || lower.contains("exceeds the available context size")
+            || lower.contains("context size")
     }
 
     private func executeToolCall(_ call: ToolCallRequest, assistantIndex: Int) async -> ToolCallResult {
@@ -271,8 +317,11 @@ final class Agent: ObservableObject {
 
     // MARK: - Token estimation + compaction
 
-    /// Rough token estimate: chars/4 across all message text + tool args + results.
-    /// Not precise, but stable and good enough to drive a usage bar.
+    /// Rough token estimate. chars/3.5 is a tighter (more conservative)
+    /// approximation of BPE token density on the kinds of prose + JSON
+    /// tool args we send through; chars/4 systematically under-counts and
+    /// let context overflow sneak past the auto-compact guard. The figure
+    /// is still cheap to compute and stable enough to drive the usage bar.
     var estimatedTokens: Int {
         var chars = systemPrompt.count
         for m in messages {
@@ -280,7 +329,8 @@ final class Agent: ObservableObject {
             for c in m.toolCalls { chars += c.name.count + c.arguments.count }
             for (_, r) in m.toolResults { chars += r.content.count }
         }
-        return chars / 4
+        // Multiply then divide to avoid losing fractional accuracy.
+        return (chars * 2) / 7
     }
 
     var contextWindow: Int {
@@ -295,7 +345,9 @@ final class Agent: ObservableObject {
 
     private func shouldAutoCompact() async -> Bool {
         guard contextWindow > 0 else { return false }
-        return contextUsageFraction >= 0.75 && messages.count >= 6
+        // Trigger earlier (65% instead of 75%) and drop the message-count
+        // floor — a single huge tool result can blow the context on its own.
+        return contextUsageFraction >= 0.65 && messages.count >= 4
     }
 
     func manualCompact() async {
